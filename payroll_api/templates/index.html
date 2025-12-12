@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Payroll Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <h1>Payroll Analysis</h1>
+      <p class="hint">
+        Upload a CSV file with headers:
+        <span class="pink">EECode</span>, <span class="pink">Firstname</span>, <span class="pink">Lastname</span>,
+        <span class="pink">InPunchTime</span>, <span class="pink">OutPunchTime</span>.
+      </p>
+
+      <form id="payrollForm">
+        <div class="field">
+          <label for="file">CSV file</label>
+          <input id="file" name="file" type="file" accept=".csv,.xlsx" required />
+          <small class="muted">Accepted: .csv (recommended), .xlsx</small>
+        </div>
+
+        <div class="field">
+          <label for="start_date">Start date</label>
+          <input id="start_date" name="start_date" type="date" required />
+        </div>
+
+        <div class="field">
+          <label for="end_date">End date</label>
+          <input id="end_date" name="end_date" type="date" required />
+        </div>
+
+        <div class="field">
+          <label for="exclude_holidays">Exclude holidays (comma separated YYYY-MM-DD)</label>
+          <input id="exclude_holidays" name="exclude_holidays" type="text" placeholder="2025-01-26,2025-12-25" />
+        </div>
+
+        <button class="btn" id="analyzeBtn" type="submit">Analyze Payroll</button>
+
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+      </form>
+    </div>
+
+    <div class="card" id="resultsCard" style="display:none;">
+      <div class="resultsHeader">
+        <h2>Results</h2>
+        <div class="actions">
+          <a id="downloadLink" class="btn secondary" href="#" style="display:none;">Download report (.xlsx)</a>
+          <button id="toggleRaw" class="btn secondary" type="button">Show raw JSON</button>
+        </div>
+      </div>
+
+      <div id="summary"></div>
+
+      <div class="grid">
+        <div class="panel">
+          <h3>Excess Daily Hours (&gt; 12)</h3>
+          <div id="table_excess_hours"></div>
+        </div>
+        <div class="panel">
+          <h3>Low Rest Hours (&lt; 10)</h3>
+          <div id="table_low_rest"></div>
+        </div>
+        <div class="panel">
+          <h3>Weekly Excess Hours (&ge; 60)</h3>
+          <div id="table_weekly_excess"></div>
+        </div>
+        <div class="panel">
+          <h3>Excess Working Days (&gt; 6)</h3>
+          <div id="table_excess_days"></div>
+        </div>
+      </div>
+
+      <div id="warnings" class="warnings"></div>
+
+      <pre id="rawJson" class="raw" style="display:none;"></pre>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

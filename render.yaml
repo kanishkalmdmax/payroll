@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: payroll-analysis
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn payroll_api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: LOG_LEVEL
+        value: INFO
+      - key: REPORT_DIR
+        value: /tmp/payroll_reports
