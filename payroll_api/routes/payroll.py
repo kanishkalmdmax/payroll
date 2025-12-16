@@ -1,114 +1,96 @@
-import logging
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from models.schemas import PayrollAnalysisResponse
+from services.payroll_service import PayrollService
 import os
 import tempfile
-import uuid
 from typing import Optional
-
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse
-
-from ..models.schemas import PayrollAnalysisResponse
-from ..services.payroll_service import PayrollService
-
-logger = logging.getLogger("payroll_api.routes")
 
 router = APIRouter(prefix="/payroll", tags=["Payroll Analysis"])
 
-REPORT_DIR = os.getenv("REPORT_DIR", "/tmp/payroll_reports")
-
-def _safe_request_id() -> str:
-    return "req_" + uuid.uuid4().hex[:12]
 
 @router.post("/analyze", response_model=PayrollAnalysisResponse)
 async def analyze_payroll(
-    file: UploadFile = File(..., description="Payroll file (.csv or .xlsx)"),
+    file: UploadFile = File(..., description="Excel (.xlsx, .xls) or CSV (.csv) file containing payroll data"),
     start_date: str = Form(..., description="Start date in YYYY-MM-DD format"),
     end_date: str = Form(..., description="End date in YYYY-MM-DD format"),
-    exclude_holidays: Optional[str] = Form(
-        None,
-        description="Comma-separated holiday dates in YYYY-MM-DD format (e.g., '2025-11-20,2025-11-25')"
-    ),
+    exclude_holidays: Optional[str] = Form(None, description="Comma-separated holiday dates in YYYY-MM-DD format (e.g., '2025-11-20,2025-11-25')")
 ):
-    request_id = _safe_request_id()
-    logger.info("[%s] analyze request received filename=%s content_type=%s", request_id, file.filename, file.content_type)
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided.")
-
-    filename_lower = file.filename.lower()
-    if not (filename_lower.endswith(".csv") or filename_lower.endswith(".xlsx") or filename_lower.endswith(".xlsm") or filename_lower.endswith(".xltx") or filename_lower.endswith(".xltm")):
-        raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a .csv or .xlsx file.")
-
-    # Parse exclude_holidays from comma-separated string to list
-    holidays_list = []
-    if exclude_holidays:
-        holidays_list = [h.strip() for h in exclude_holidays.split(",") if h.strip()]
-
-    temp_path = None
+    """
+    Analyze payroll data and flag violations
+    
+    This endpoint analyzes payroll data and flags:
+    - Persons with punch time exceeding 12 hours
+    - Persons with rest hours less than 10
+    - Persons working 60+ hours per week
+    - Persons working more than 6 days (excluding specified holidays)
+    
+    Args:
+        file: Excel (.xlsx, .xls) or CSV (.csv) file containing payroll data
+        start_date: Start date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format
+        exclude_holidays: Comma-separated holiday dates (optional)
+    
+    Returns:
+        PayrollAnalysisResponse with all flagged entries
+    """
+    # Validate file type
+    if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
+        raise HTTPException(
+            status_code=400, 
+            detail="Invalid file type. Please upload an Excel file (.xlsx or .xls) or CSV file (.csv)"
+        )
+    
+    # Determine file extension for temporary file
+    file_extension = os.path.splitext(file.filename)[1].lower()
+    
+    # Create a temporary file to store the uploaded file
+    temp_file_path = None
     try:
-        suffix = os.path.splitext(filename_lower)[1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        # Create temporary file with appropriate extension
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            # Read uploaded file content
             content = await file.read()
-            if not content:
-                raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-            tmp.write(content)
-            temp_path = tmp.name
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        # Parse exclude_holidays from comma-separated string to list
+        holidays_list = []
+        if exclude_holidays:
+            holidays_list = [h.strip() for h in exclude_holidays.split(',') if h.strip()]
+        
+        # Initialize service with temporary file path
+        service = PayrollService(temp_file_path)
+        
+        # Perform analysis
+        import uuid
 
-        logger.info("[%s] temp_file_written=%s size_bytes=%s", request_id, temp_path, len(content))
+        result = service.analyze_payroll(
+        start_date=start_date,
+        end_date=end_date,
+        exclude_holidays=holidays_list,
+        report_dir="/tmp/payroll_reports", 
+        request_id=str(uuid.uuid4())        
+)
 
-        df = PayrollService.load_file(temp_path)
-        service = PayrollService(df)
-
-        result = service.analyze(
-            start_date=start_date,
-            end_date=end_date,
-            exclude_holidays=holidays_list,
-            report_dir=REPORT_DIR,
-            request_id=request_id,
-        )
-
-        download_url = None
-        if result.report_path and os.path.exists(result.report_path):
-            download_url = f"/payroll/report/{request_id}"
-
-        return PayrollAnalysisResponse(
-            request_id=request_id,
-            summary=result.data["summary"],
-            flagged_excess_hours=result.data["flagged_excess_hours"],
-            flagged_low_rest_hours=result.data["flagged_low_rest_hours"],
-            flagged_weekly_excess=result.data["flagged_weekly_excess"],
-            flagged_excess_days=result.data["flagged_excess_days"],
-            download_url=download_url,
-            warnings=result.warnings,
-        )
-
-    except HTTPException:
-        raise
+        return PayrollAnalysisResponse(**result.data, report_path=result.report_path, warnings=result.warnings)
+    
     except ValueError as e:
-        # Known validation issue
-        logger.exception("[%s] validation_error", request_id)
-        raise HTTPException(status_code=400, detail=f"{e} (request_id={request_id})")
+        raise HTTPException(status_code=400, detail=f"Invalid input: {str(e)}")
     except Exception as e:
-        logger.exception("[%s] unexpected_error", request_id)
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {e} (request_id={request_id})")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
     finally:
-        if temp_path and os.path.exists(temp_path):
+        # Clean up temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
             try:
-                os.unlink(temp_path)
+                os.unlink(temp_file_path)
             except Exception:
-                logger.warning("[%s] failed_to_delete_temp=%s", request_id, temp_path)
+                pass
 
-@router.get("/report/{request_id}")
-async def download_report(request_id: str):
-    path = os.path.join(REPORT_DIR, f"payroll_report_{request_id}.xlsx")
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="Report not found (it may have expired or generation failed).")
-    return FileResponse(
-        path,
-        filename=f"payroll_report_{request_id}.xlsx",
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
 
 @router.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "Payroll Analysis API"}
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "Payroll Analysis API"
+    }
